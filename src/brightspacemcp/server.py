@@ -1,5 +1,6 @@
 from typing import Any
 import asyncio
+import base64
 import logging
 import httpx2 as ht
 from mcp.server import MCPServer
@@ -54,6 +55,63 @@ async def request(api_pull, params=None):
         except Exception as exc:
             logger.warning("Brightspace %s -> %s", api_pull, exc.__class__.__name__)
             return {"error": exc.__class__.__name__, "endpoint": api_pull}
+
+
+_TEXTUAL_CONTENT_TYPES = ("text/", "html", "xml", "json", "javascript", "csv")
+
+
+async def request_file(api_pull, params=None):
+    """
+    Like request(), but for endpoints that return a raw file body instead of
+    JSON (e.g. /content/topics/{id}/file). Follows redirects (D2L often 302s to
+    a signed storage URL) and returns a dict describing the file:
+
+        {"ContentType": ..., "FileName": ..., "Size": <bytes>,
+         "Text": "..."}                      # for textual payloads
+        {"ContentType": ..., "FileName": ..., "Size": <bytes>,
+         "Base64": "..."}                    # for binary payloads
+
+    On failure it returns the same {"error": ...} shape as request().
+    """
+    cookies = ba.return_cookies()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0'}
+    async with ht.AsyncClient(follow_redirects=True) as client:
+        try:
+            response = await client.get(
+                f'https://purdue.brightspace.com/d2l/api{api_pull}',
+                cookies=cookies,
+                headers=headers,
+                params=params,
+                timeout=60.0,
+            )
+            response.raise_for_status()
+        except ht.HTTPStatusError as exc:
+            status = exc.response.status_code
+            logger.warning("Brightspace %s -> HTTP %s", api_pull, status)
+            hint = "session cookies likely expired - refresh .env" if status in (401, 403) else None
+            return {"error": f"HTTP {status}", "endpoint": api_pull, "hint": hint}
+        except Exception as exc:
+            logger.warning("Brightspace %s -> %s", api_pull, exc.__class__.__name__)
+            return {"error": exc.__class__.__name__, "endpoint": api_pull}
+
+    content_type = response.headers.get("content-type", "") or ""
+    disposition = response.headers.get("content-disposition", "") or ""
+    file_name = None
+    for part in disposition.split(";"):
+        part = part.strip()
+        if part.lower().startswith("filename="):
+            file_name = part[9:].strip().strip('"')
+        elif part.lower().startswith("filename*="):
+            file_name = part.split("''", 1)[-1].strip().strip('"')
+    body = response.content
+    out = {"ContentType": content_type, "FileName": file_name, "Size": len(body)}
+    lowered = content_type.lower()
+    if any(marker in lowered for marker in _TEXTUAL_CONTENT_TYPES):
+        out["Text"] = response.text
+    else:
+        out["Base64"] = base64.b64encode(body).decode("ascii")
+    return out
+
 
 @mcp.tool()
 async def getUser():
@@ -219,6 +277,27 @@ async def getCourseToc(orgid, full: bool | str = False):
     if _coerce_bool(full):
         return raw
     return _project_toc(raw)
+
+@mcp.tool()
+async def getTopicFile(orgid, topicId):
+    """
+    Downloads the actual file backing a File-type content topic
+    (GET /le/1.82/{orgid}/content/topics/{topicId}/file).
+
+    Input uses the OrgUnit ID and the TopicId from getCourseToc (each flat topic
+    row carries TopicId and Type - this only works for topics whose Type is a
+    file, e.g. "File", not a link/URL topic). This is the payload itself (the
+    lecture PDF, slide deck, handout, HTML reading), not metadata; for the
+    topic's structure/availability fields use getCourseToc.
+
+    Returns a dict: ContentType, FileName (from Content-Disposition, may be
+    null), Size in bytes, and then either Text (for HTML/text/XML/JSON/CSV
+    payloads) or Base64 (base64-encoded bytes for PDFs, Office docs, images,
+    etc.). Redirects to D2L's signed storage URLs are followed automatically.
+    On failure returns {"error": ...} like the other tools (a 404 usually means
+    the topic isn't a file topic).
+    """
+    return await request_file(f'/le/1.82/{orgid}/content/topics/{topicId}/file')
 
 @mcp.tool()
 async def getWeeklyCalendarEvents(orgid, days: int | str = 7):

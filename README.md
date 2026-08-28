@@ -42,9 +42,14 @@ fan out across courses concurrently.
 
 **Content**
 - `getCourseToc` — the course table of contents. Default is a flat list of
-  topics (module path, `Type`, `Url`, `GradeItemId`, availability fields);
-  `full=true` returns the raw nested D2L tree. The TOC has no due dates or
-  completion state.
+  topics (module path, `Type`, `Url`, `TopicId`, `GradeItemId`, availability
+  fields); `full=true` returns the raw nested D2L tree. The TOC has no due dates
+  or completion state.
+- `getTopicFile` — downloads the file backing a File-type content topic
+  (`GET /le/(version)/(orgUnitId)/content/topics/(topicId)/file`). Takes `orgid`
+  plus a `topicId` from `getCourseToc`. Returns `ContentType` / `FileName` /
+  `Size`, then `Text` for HTML/text payloads or `Base64` for binary ones (PDFs,
+  slide decks, images). Redirects to D2L's signed storage URLs are followed.
 
 Completed content items and inactive quizzes are filtered out by default;
 `include_completed` / `include_inactive` bring them back. Calendar events carry
