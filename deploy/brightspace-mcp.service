@@ -19,11 +19,9 @@ RestartSec=5
 CacheDirectory=brightspace-mcp
 Environment=UV_CACHE_DIR=%C/brightspace-mcp
 
-# brightspacemcp.auth / brightspacemcp.auth0 call load_dotenv(), which reads
-# ./.env from WorkingDirectory, so the d2l* session cookies and the AUTH0_*
-# settings load without EnvironmentFile.
-# Inbound: /mcp requires an Auth0-issued bearer JWT (brightspacemcp.auth0). The
-# token verifier fetches the tenant JWKS over HTTPS on first use.
+# brightspacemcp.auth calls load_dotenv(), which reads ./.env from
+# WorkingDirectory, so the d2l* session cookies load without EnvironmentFile.
+# NOTE: there is no inbound auth - the /mcp/ endpoint accepts anonymous calls.
 
 # Hardening
 NoNewPrivileges=true

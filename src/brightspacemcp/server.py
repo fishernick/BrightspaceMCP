@@ -5,24 +5,15 @@ import httpx2 as ht
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from brightspacemcp import auth as ba
-from brightspacemcp import auth0
 from datetime import datetime, timedelta, timezone
 
 
 logger = logging.getLogger(__name__)
 
-# Inbound MCP-client auth: every /mcp call must carry a bearer JWT that
-# auth0.Auth0TokenVerifier validates (sig / iss / aud / exp / scope). With these
-# two kwargs the SDK also returns 401 + WWW-Authenticate on a missing/invalid
-# token and serves /.well-known/oauth-protected-resource/mcp. See auth0.py.
-mcp = MCPServer(
-    "brightspace",
-    auth=auth0.auth_settings(),
-    token_verifier=auth0.Auth0TokenVerifier(),
-)
-
-# Mirror the RFC 9728 document at the path-less well-known URL too.
-auth0.register_bare_metadata_route(mcp)
+# Inbound MCP-client auth is not configured: the /mcp/ endpoint accepts any
+# request that reaches it (loopback + the nginx proxy). Auth is expected to be
+# added here later via MCPServer(auth=..., token_verifier=...).
+mcp = MCPServer("brightspace")
 
 # Served on 127.0.0.1 behind the nginx proxy for https://mcp.xennick.com, which
 # forwards the original Host header. The SDK auto-enables DNS-rebinding
@@ -761,13 +752,12 @@ def main() -> None:
     Bound to loopback; a front nginx proxy terminates TLS for
     https://mcp.xennick.com (see deploy/brightspace-mcp.service).
 
-    Inbound auth: /mcp requires an Auth0-issued bearer JWT (see auth0.py).
+    Inbound auth is not configured: the /mcp/ endpoint accepts any request that
+    reaches it. Anything that can reach it can drive the Brightspace account.
     """
-    logger.info(
-        "Inbound auth: bearer JWT required on /mcp (issuer=%s, audience=%s, required_scopes=%s)",
-        auth0.issuer(),
-        auth0.audience(),
-        auth0.required_scopes() or "(none)",
+    logger.warning(
+        "Inbound auth is not configured: the /mcp/ endpoint accepts "
+        "unauthenticated requests."
     )
 
     mcp.run(

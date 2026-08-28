@@ -57,7 +57,7 @@ Completed content items and inactive quizzes are filtered out by default;
 
 ```
 Claude / MCP client
-      │  HTTPS  + Bearer JWT (Auth0-issued — see below)
+      │  HTTPS  (no inbound auth — see below)
       ▼
 nginx  (mcp.xennick.com, TLS termination)
       │  HTTP, Host preserved
@@ -71,32 +71,11 @@ purdue.brightspace.com/d2l/api
 - **Transport:** `streamable-http` bound to loopback. `TransportSecuritySettings`
   pins `allowed_hosts` / `allowed_origins` so the SDK's DNS-rebinding protection
   accepts the `Host` nginx forwards.
-- **Inbound auth (MCP client → this server):** OAuth 2.0 bearer, with an
-  [Auth0](https://auth0.com/) tenant (`AUTH0_ISSUER`,
-  `https://dev-l23cfku2l8umnrhn.us.auth0.com/`) as the authorization server and
-  this process as an [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)
-  protected resource. `MCPServer(...)` in `server.py` is built with
-  `auth=auth0.auth_settings()` + `token_verifier=auth0.Auth0TokenVerifier()`
-  (see `auth0.py`), which gives three things:
-  1. **`401` + `WWW-Authenticate: Bearer … resource_metadata="…"`** on any
-     `/mcp` request with no/invalid token (the SDK's `RequireAuthMiddleware`).
-  2. **`/.well-known/oauth-protected-resource/mcp`** (and, via a compat shim,
-     the path-less `/.well-known/oauth-protected-resource`) naming the Auth0
-     tenant as `authorization_servers` and `https://mcp.xennick.com/mcp` as
-     `resource`.
-  3. **Per-call JWT validation** — RS256 signature against the tenant JWKS
-     (cached, refreshed on key rotation), exact-match `iss`, `aud` contains
-     this resource, `exp`/`nbf`/`iat` (60 s leeway), and scopes parsed from
-     `scope` / `scp` / `permissions`. `AUTH0_REQUIRED_SCOPES` (space-separated,
-     empty by default) makes the SDK reject a token missing a scope with
-     `403 insufficient_scope`.
-
-  Config (`.env` or environment; defaults shown): `AUTH0_ISSUER=`
-  `https://dev-l23cfku2l8umnrhn.us.auth0.com/`,
-  `AUTH0_AUDIENCE=https://mcp.xennick.com/mcp` (the Auth0 API identifier),
-  `MCP_RESOURCE_URL` (defaults to the audience), `AUTH0_JWKS_URI` (defaults to
-  `<issuer>.well-known/jwks.json`), `AUTH0_REQUIRED_SCOPES`. nginx must forward
-  `/.well-known/oauth-protected-resource*` to the server as well as `/mcp`.
+- **Inbound auth (MCP client → this server):** **none.** The server is
+  constructed with no `auth` / `token_verifier`, so the `/mcp/` endpoint accepts
+  any request that reaches it (loopback + the nginx proxy); `main()` logs a
+  warning at startup. Authentication is expected to be added later on the
+  `MCPServer(...)` in `server.py`.
 - **Outbound auth (this server → Brightspace):** `auth.return_cookies()` reads
   `d2lSessionVal` / `d2lSecureSessionVal` from `.env` (via `python-dotenv`).
   Those are a logged-in browser session's cookies; a separate process is
@@ -109,11 +88,10 @@ purdue.brightspace.com/d2l/api
 
 ### Caveats
 
-The **inbound** side now requires an Auth0-issued bearer JWT, but the
-**outbound** side still talks to the Valence API with a **scraped session
-cookie**, not a registered OAuth 2.0 app, so it is single-user, tied to one
-`purdue.brightspace.com` account, breaks when the session expires, and may be
-against Purdue's API terms.
+The **inbound** side has no authentication, and the **outbound** side
+talks to the Valence API with a **scraped session cookie**, not a registered
+OAuth 2.0 app, so it is single-user, tied to one `purdue.brightspace.com`
+account, breaks when the session expires, and may be against Purdue's API terms.
 It is a personal automation tool, not a multi-tenant service. A production
 version would also register a D2L app and use the Valence OAuth flow for the
 Brightspace call.
@@ -137,12 +115,9 @@ d2lSecureSessionVal=...
 `purdue.brightspace.com` — cookies named `d2lSessionVal` and
 `d2lSecureSessionVal`.)
 
-Inbound requests to `/mcp` must carry an Auth0-issued bearer JWT
-(`Authorization: Bearer …`) whose `aud` is `https://mcp.xennick.com/mcp`. The
-Auth0 issuer/audience default to the values above; override with `AUTH0_ISSUER`
-/ `AUTH0_AUDIENCE` / `AUTH0_REQUIRED_SCOPES` in `.env` if needed. A client that
-speaks MCP's OAuth discovery will find the authorization server via the
-`/.well-known/oauth-protected-resource` document this server publishes.
+There is **no inbound authentication** — the `/mcp/` endpoint is open to
+anything that can reach it, so keep it behind the loopback bind / nginx proxy
+and don't expose it further until auth is added.
 
 Run the server:
 
@@ -173,7 +148,6 @@ src/brightspacemcp/
   __main__.py   python -m brightspacemcp
   server.py     MCPServer, all @mcp.tool() definitions, feed-merge logic
   auth.py       Brightspace session cookies from .env (outbound)
-  auth0.py      Auth0 bearer-JWT verifier + RFC 9728 metadata (inbound)
 deploy/
   brightspace-mcp.service
 pyproject.toml  uv_build, src layout, `brightspacemcp` console script
