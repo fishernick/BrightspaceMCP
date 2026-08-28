@@ -10,11 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
-# Inbound MCP-client auth is OFF for now: the /mcp/ endpoint accepts any request
-# that reaches it (loopback + the nginx proxy). The static API-key verifier
-# still lives in brightspacemcp.apikey - to require an
-# "Authorization: Bearer <key>" again, pass its build_auth_settings() /
-# build_token_verifier() back into MCPServer() below and set MCP_API_KEYS.
+# Inbound MCP-client auth is not configured: the /mcp/ endpoint accepts any
+# request that reaches it (loopback + the nginx proxy). Auth is expected to be
+# added here later via MCPServer(auth=..., token_verifier=...).
 mcp = MCPServer("brightspace")
 
 # Served on 127.0.0.1 behind the nginx proxy for https://mcp.xennick.com, which
@@ -754,13 +752,12 @@ def main() -> None:
     Bound to loopback; a front nginx proxy terminates TLS for
     https://mcp.xennick.com (see deploy/brightspace-mcp.service).
 
-    Inbound auth is OFF for now: the /mcp/ endpoint accepts any request that
-    reaches it. Re-wire brightspacemcp.apikey (AuthSettings + token_verifier on
-    the MCPServer above) to require an "Authorization: Bearer <key>" again.
+    Inbound auth is not configured: the /mcp/ endpoint accepts any request that
+    reaches it. Anything that can reach it can drive the Brightspace account.
     """
     logger.warning(
-        "Inbound auth is DISABLED: the /mcp/ endpoint accepts unauthenticated "
-        "requests. Anything that can reach it can drive the Brightspace account."
+        "Inbound auth is not configured: the /mcp/ endpoint accepts "
+        "unauthenticated requests."
     )
 
     mcp.run(

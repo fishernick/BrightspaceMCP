@@ -15,7 +15,6 @@ dependencies = [
 
 [project.scripts]
 brightspacemcp = "brightspacemcp:main"
-brightspacemcp-keygen = "brightspacemcp.apikey:_main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

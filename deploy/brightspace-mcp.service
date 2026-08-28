@@ -21,9 +21,7 @@ Environment=UV_CACHE_DIR=%C/brightspace-mcp
 
 # brightspacemcp.auth calls load_dotenv(), which reads ./.env from
 # WorkingDirectory, so the d2l* session cookies load without EnvironmentFile.
-# NOTE: inbound API-key verification is disabled for now - the /mcp/ endpoint
-# accepts anonymous calls. Re-wire brightspacemcp.apikey in server.py and set
-# MCP_API_KEYS in .env to require a Bearer key again.
+# NOTE: there is no inbound auth - the /mcp/ endpoint accepts anonymous calls.
 
 # Hardening
 NoNewPrivileges=true

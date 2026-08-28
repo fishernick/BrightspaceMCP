@@ -57,7 +57,7 @@ Completed content items and inactive quizzes are filtered out by default;
 
 ```
 Claude / MCP client
-      │  HTTPS  (no inbound auth for now — see below)
+      │  HTTPS  (no inbound auth — see below)
       ▼
 nginx  (mcp.xennick.com, TLS termination)
       │  HTTP, Host preserved
@@ -71,18 +71,11 @@ purdue.brightspace.com/d2l/api
 - **Transport:** `streamable-http` bound to loopback. `TransportSecuritySettings`
   pins `allowed_hosts` / `allowed_origins` so the SDK's DNS-rebinding protection
   accepts the `Host` nginx forwards.
-- **Inbound auth (MCP client → this server):** **disabled for now.** The server
-  is constructed with no `auth` / `token_verifier`, so the `/mcp/` endpoint
-  accepts any request that reaches it (loopback + the nginx proxy). `main()`
-  logs a warning at startup. The static API-key verifier still lives in
-  `brightspacemcp.apikey` (and `brightspacemcp-keygen` still generates keys) —
-  to turn it back on, pass `ak.build_auth_settings()` /
-  `ak.build_token_verifier()` into `MCPServer(...)` in `server.py` and set
-  `MCP_API_KEYS` in `.env`. When on: every `/mcp` request must send
-  `Authorization: Bearer <key>` (header name and `bearer` scheme
-  case-insensitive), which `apikey.StaticApiKeyVerifier` constant-time-compares
-  against the configured set — no issuer, no JWKS, no expiry, no network call,
-  and no OAuth protected-resource metadata advertised.
+- **Inbound auth (MCP client → this server):** **none.** The server is
+  constructed with no `auth` / `token_verifier`, so the `/mcp/` endpoint accepts
+  any request that reaches it (loopback + the nginx proxy); `main()` logs a
+  warning at startup. Authentication is expected to be added later on the
+  `MCPServer(...)` in `server.py`.
 - **Outbound auth (this server → Brightspace):** `auth.return_cookies()` reads
   `d2lSessionVal` / `d2lSecureSessionVal` from `.env` (via `python-dotenv`).
   Those are a logged-in browser session's cookies; a separate process is
@@ -95,8 +88,7 @@ purdue.brightspace.com/d2l/api
 
 ### Caveats
 
-The **inbound** side has static API-key auth available but **turned off for
-now**, and the **outbound** side still
+The **inbound** side has no authentication, and the **outbound** side
 talks to the Valence API with a **scraped session cookie**, not a registered
 OAuth 2.0 app, so it is single-user, tied to one `purdue.brightspace.com`
 account, breaks when the session expires, and may be against Purdue's API terms.
@@ -119,34 +111,13 @@ d2lSessionVal=...
 d2lSecureSessionVal=...
 ```
 
-Inbound API-key auth is **off for now** — the `/mcp/` endpoint is open to
-anything that can reach it. To turn it back on: re-wire `brightspacemcp.apikey`
-in `server.py` (see Architecture), generate a key per client with `uv run
-brightspacemcp-keygen` (it prints a raw key for the client and a
-`MCP_API_KEYS=sha256:…` line for `.env`, so no plaintext lands on the server),
-and add to `.env`:
-
-```
-# Each entry is a raw key or its sha256:<hex> digest; comma/space separated.
-MCP_API_KEYS=sha256:1f2e…,sha256:9a0b…
-# MCP_RESOURCE_URL=https://mcp.xennick.com/mcp
-```
-
 (Copy the `d2l*` cookies from your browser's dev tools while logged into
 `purdue.brightspace.com` — cookies named `d2lSessionVal` and
 `d2lSecureSessionVal`.)
 
-Both variables only take effect once the API-key verifier is re-wired in
-`server.py` (it is not read at all right now):
-
-| Variable | Meaning |
-| --- | --- |
-| `MCP_API_KEYS` | Accepted keys, each raw or `sha256:<hex>`, comma/space separated. **A non-empty value turns verification on.** |
-| `MCP_RESOURCE_URL` | Public URL of this endpoint. Default: `https://mcp.xennick.com/mcp`. |
-
-When enabled, each allowed MCP client sends its key as `Authorization: Bearer
-<key>`. To revoke a client, drop its entry from `MCP_API_KEYS` and restart. To
-add one, append another key.
+There is **no inbound authentication** — the `/mcp/` endpoint is open to
+anything that can reach it, so keep it behind the loopback bind / nginx proxy
+and don't expose it further until auth is added.
 
 Run the server:
 
@@ -177,7 +148,6 @@ src/brightspacemcp/
   __main__.py   python -m brightspacemcp
   server.py     MCPServer, all @mcp.tool() definitions, feed-merge logic
   auth.py       Brightspace session cookies from .env (outbound)
-  apikey.py     inbound API-key Bearer-token verification
 deploy/
   brightspace-mcp.service
 pyproject.toml  uv_build, src layout, `brightspacemcp` console script
