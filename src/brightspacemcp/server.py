@@ -6,6 +6,11 @@ from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from brightspacemcp import auth as ba
 from datetime import datetime, timedelta, timezone
+import hmac
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+import os
+import uvicorn
 
 
 logger = logging.getLogger(__name__)
@@ -746,26 +751,35 @@ async def filter_current_courses(input):
 
     return courses
 
+class RequireToken(BaseHTTPMiddleware):
+    def __init__(self, app, token: str):
+        super().__init__(app)
+        self._token = token
+
+    async def dispatch(self, request, call_next):
+        auth = request.headers.get("authorization", "")
+        supplied = auth[7:] if auth.lower().startswith("bearer ") else ""
+        if not hmac.compare_digest(supplied, self._token):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)   # token good → hand off to MCP
+
 def main() -> None:
     """Console-script entry point: serve the MCP tools over streamable-http.
 
     Bound to loopback; a front nginx proxy terminates TLS for
     https://mcp.xennick.com (see deploy/brightspace-mcp.service).
-
-    Inbound auth is not configured: the /mcp/ endpoint accepts any request that
-    reaches it. Anything that can reach it can drive the Brightspace account.
     """
-    logger.warning(
-        "Inbound auth is not configured: the /mcp/ endpoint accepts "
-        "unauthenticated requests."
-    )
+    
 
-    mcp.run(
-        transport="streamable-http",
-        host="127.0.0.1",
-        port=8008,
+    token = os.environ["MCP_INBOUND_TOKEN"] 
+
+    app = mcp.streamable_http_app(
         transport_security=TRANSPORT_SECURITY,
+        host="127.0.0.1",
     )
+    app.add_middleware(RequireToken, token=token)
+
+    uvicorn.run(app, host="127.0.0.1", port=8008, log_level="info")
 
 
 if __name__ == "__main__":
