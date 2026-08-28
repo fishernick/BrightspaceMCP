@@ -1,0 +1,40 @@
+[Unit]
+Description=Brightspace MCP connector (streamable-http on 127.0.0.1:8008)
+Documentation=file:/home/nick/BrightspaceMCP/README.md
+After=network-online.target brightspace-auth-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nick
+WorkingDirectory=/home/nick/BrightspaceMCP
+# --frozen --no-sync: run straight from the committed uv.lock / existing .venv,
+# never touching the lockfile at boot. Run `uv sync` by hand after changing deps.
+ExecStart=/home/nick/.local/bin/uv run --frozen --no-sync brightspacemcp
+Restart=on-failure
+RestartSec=5
+
+# uv still needs a writable cache/lock dir even with --no-sync. ProtectHome makes
+# ~/.cache read-only, so redirect it to a systemd-managed dir (/var/cache/...).
+CacheDirectory=brightspace-mcp
+Environment=UV_CACHE_DIR=%C/brightspace-mcp
+
+# brightspacemcp.auth calls load_dotenv(), which reads ./.env from
+# WorkingDirectory, so the d2l* session cookies load without EnvironmentFile.
+# NOTE: inbound API-key verification is disabled for now - the /mcp/ endpoint
+# accepts anonymous calls. Re-wire brightspacemcp.apikey in server.py and set
+# MCP_API_KEYS in .env to require a Bearer key again.
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
