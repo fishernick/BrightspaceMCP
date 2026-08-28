@@ -15,18 +15,20 @@ import uvicorn
 
 logger = logging.getLogger(__name__)
 
-# Inbound MCP-client auth is not configured: the /mcp/ endpoint accepts any
-# request that reaches it (loopback + the nginx proxy). Auth is expected to be
-# added here later via MCPServer(auth=..., token_verifier=...).
+# Inbound MCP-client auth: the RequireToken middleware (see main()) rejects any
+# request to /mcp/ without a matching `Authorization: Bearer <MCP_INBOUND_TOKEN>`
+# header. The MCPServer itself is constructed with no auth/token_verifier.
 mcp = MCPServer("brightspace")
 
-# Served on 127.0.0.1 behind the nginx proxy for https://mcp.xennick.com, which
-# forwards the original Host header. The SDK auto-enables DNS-rebinding
-# protection for loopback binds and would otherwise 421 that Host.
+# Served on 127.0.0.1 behind an nginx proxy that terminates TLS for
+# https://<MCP_PUBLIC_HOST> and forwards the original Host header. The SDK
+# auto-enables DNS-rebinding protection for loopback binds and would otherwise
+# 421 that Host, so the public host has to be in allowed_hosts/_origins.
+PUBLIC_HOST = os.environ.get("MCP_PUBLIC_HOST", "mcp.xennick.com")
 TRANSPORT_SECURITY = TransportSecuritySettings(
     enable_dns_rebinding_protection=True,
-    allowed_hosts=["mcp.xennick.com", "127.0.0.1:8008", "localhost:8008"],
-    allowed_origins=["https://mcp.xennick.com"],
+    allowed_hosts=[PUBLIC_HOST, "127.0.0.1:8008", "localhost:8008"],
+    allowed_origins=[f"https://{PUBLIC_HOST}"],
 )
 
 async def request(api_pull, params=None):
@@ -43,8 +45,15 @@ async def request(api_pull, params=None):
             )
             response.raise_for_status()
             return response.json()
-        except Exception:
-            return None
+        except ht.HTTPStatusError as exc:
+            status = exc.response.status_code
+            logger.warning("Brightspace %s -> HTTP %s", api_pull, status)
+            # 401/403 almost always means the scraped session cookies expired.
+            hint = "session cookies likely expired - refresh .env" if status in (401, 403) else None
+            return {"error": f"HTTP {status}", "endpoint": api_pull, "hint": hint}
+        except Exception as exc:
+            logger.warning("Brightspace %s -> %s", api_pull, exc.__class__.__name__)
+            return {"error": exc.__class__.__name__, "endpoint": api_pull}
 
 @mcp.tool()
 async def getUser():
@@ -54,23 +63,20 @@ async def getUser():
     return await request('/lp/1.0/users/whoami')
 
 @mcp.tool()
-async def getClasses(bool):
+async def getClasses(full: bool | str = False):
     """
-    Returns a list of all of the user's current enrollments.
-    Bool argument must be passed as true or false.
-    Course names will be the "Name" object.
-    Will return past enrollments and hidden enrollments.
+    Returns the user's course enrollments. Course names are the "Name" field.
 
-    Pass true -> Return full list
-    Pass false -> Filter a Brightspace getClasses() response down to just the current,
-        accessible Course Offerings (skipping old terms and duplicate
-        Group/Lab sub-orgs), de-duped by course code.
+    full=False (default): a Brightspace enrollments response filtered down to the
+        current, accessible Course Offerings (skipping old terms and duplicate
+        Group/Lab sub-orgs), de-duped by course code -> [{id, name, code}, ...].
+    full=True: the raw enrollments feed, including past and hidden enrollments.
 
-    Most of the time, False should be passed for token-conservation purposes.
+    Pass False most of the time to conserve tokens. Accepts a real bool or a
+    stringified one ("true"/"false").
     """
-    is_full = str(bool).strip().lower() == "true"
     enrollments = await request('/lp/1.32/enrollments/myenrollments/')
-    if is_full:
+    if _coerce_bool(full):
         return enrollments
     return await filter_current_courses(enrollments)
 
@@ -767,18 +773,18 @@ def main() -> None:
     """Console-script entry point: serve the MCP tools over streamable-http.
 
     Bound to loopback; a front nginx proxy terminates TLS for
-    https://mcp.xennick.com (see deploy/brightspace-mcp.service).
+    https://<MCP_PUBLIC_HOST> (see deploy/brightspace-mcp.service).
+    Requires MCP_INBOUND_TOKEN in the environment (enforced by RequireToken).
     """
-    
 
-    token = os.environ["MCP_INBOUND_TOKEN"] 
+    token = os.environ["MCP_INBOUND_TOKEN"]
 
     app = mcp.streamable_http_app(
         transport_security=TRANSPORT_SECURITY,
         host="127.0.0.1",
     )
     app.add_middleware(RequireToken, token=token)
-
+    
     uvicorn.run(app, host="127.0.0.1", port=8008, log_level="info")
 
 
