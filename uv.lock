@@ -48,6 +48,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx2" },
     { name = "mcp", extra = ["cli"] },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
 ]
 
@@ -55,6 +56,7 @@ dependencies = [
 requires-dist = [
     { name = "httpx2", specifier = ">=2.12" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.1.1" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "python-dotenv", specifier = ">=1.2" },
 ]
 
