@@ -86,7 +86,8 @@ purdue.brightspace.com/d2l/api
   nginx forwards.
 - **Inbound auth (MCP client → this server):** the `RequireToken` middleware
   rejects any request without `Authorization: Bearer <MCP_INBOUND_TOKEN>`
-  (constant-time compare); the token lives in `.env`.
+  (constant-time compare); the token lives in `.env` and is minted by
+  `mint_token.py`.
 - **Outbound auth (this server → Brightspace):** `auth.return_cookies()` reads
   `d2lSessionVal` / `d2lSecureSessionVal` from `.env` (via `python-dotenv`).
   Those are a logged-in browser session's cookies; a separate process is
@@ -132,7 +133,38 @@ commented out; un-comment to register it (no extra dependencies).
 
 ## Setup
 
-Requires Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/). Python ≥ 3.14 is fetched by `uv`
+automatically — you don't need it installed already.
+
+### Guided (recommended)
+
+```bash
+./setup.sh
+```
+
+It's interactive and safe to re-run. It will:
+
+1. install `uv` if it's missing (offers to run the official installer),
+2. `uv sync` (and, if you say yes, the heavy `transcription` extra),
+3. prompt for your two Brightspace session cookies,
+4. mint the inbound bearer token via [`mint_token.py`](mint_token.py),
+5. write `.env`, and
+6. print the line to paste into your MCP client:
+
+   ```
+   Copy this whole token for input: "Bearer <token>"
+   ```
+
+Then run the server:
+
+```bash
+uv run brightspacemcp          # or: python -m brightspacemcp
+```
+
+It listens on `http://127.0.0.1:8008`. Point an MCP client at that (directly, or
+through a TLS proxy as above).
+
+### Manual
 
 ```bash
 uv sync
@@ -150,18 +182,25 @@ MCP_INBOUND_TOKEN=...        # bearer token MCP clients must send
 MCP_PUBLIC_HOST=...          # optional; public hostname nginx serves (default mcp.xennick.com)
 ```
 
-(Copy the `d2l*` cookies from your browser's dev tools while logged into
-`purdue.brightspace.com` — cookies named `d2lSessionVal` and
-`d2lSecureSessionVal`.)
-
-Run the server:
+Copy the `d2l*` cookies from your browser's dev tools while logged into
+`purdue.brightspace.com` (DevTools → Application / Storage → Cookies — the
+entries named `d2lSessionVal` and `d2lSecureSessionVal`). For the token, run
 
 ```bash
-uv run brightspacemcp          # or: python -m brightspacemcp
+uv run python mint_token.py
 ```
 
-It listens on `http://127.0.0.1:8008`. Point an MCP client at that (directly, or
-through a TLS proxy as above).
+which generates one, upserts `MCP_INBOUND_TOKEN` into `.env` (leaving your other
+lines alone), and prints the `Bearer …` string. `--show` reprints the current
+one; `--force` replaces it.
+
+Then run the server as above.
+
+### Refreshing expired cookies
+
+When tools start returning 401/403, your `d2l*` cookies have expired. Re-run
+`./setup.sh` (press enter to keep the token and re-paste the two cookies), or
+edit the two `d2l*` lines in `.env` by hand.
 
 ### Deploy as a service
 
@@ -184,6 +223,8 @@ src/brightspacemcp/
   server.py     MCPServer, all @mcp.tool() definitions, request helpers
                 (JSON / file download), feed-merge logic, RequireToken
   auth.py       Brightspace session cookies from .env (outbound)
+setup.sh        interactive first-run setup (deps + .env + token)
+mint_token.py   generate MCP_INBOUND_TOKEN and upsert it into .env
 deploy/
   brightspace-mcp.service
 pyproject.toml  uv_build, src layout, `brightspacemcp` console script
