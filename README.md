@@ -46,15 +46,24 @@ fan out across courses concurrently.
   fields); `full=true` returns the raw nested D2L tree. The TOC has no due dates
   or completion state.
 - `getTopicFile` — downloads the file backing a File-type content topic
-  (`GET /le/(version)/(orgUnitId)/content/topics/(topicId)/file`). Takes `orgid`
-  plus a `topicId` from `getCourseToc`. Returns `ContentType` / `FileName` /
-  `Size`, then `Text` for HTML/text payloads or `Base64` for binary ones (PDFs,
+  (`GET /le/1.82/{orgid}/content/topics/{topicId}/file`). Takes `orgid` plus a
+  `topicId` from `getCourseToc` (only works where the topic's `Type` is a file,
+  not a link/URL topic). Returns `ContentType` / `FileName` / `Size`, then
+  `Text` for HTML/text/XML/JSON/CSV payloads or `Base64` for binary ones (PDFs,
   slide decks, images). Redirects to D2L's signed storage URLs are followed.
 
 Completed content items and inactive quizzes are filtered out by default;
 `include_completed` / `include_inactive` bring them back. Calendar events carry
 no completion state, so a calendar-only entry can't be filtered that way —
 cross-check `getAssignedGrades` for submission/score status.
+
+On any upstream failure a tool returns `{"error": ..., "endpoint": ...}` in
+place of its normal payload (rather than a bare `null`); a 401/403 — usually
+expired session cookies — adds a `"hint"` that says so.
+
+Two more tools (`getLink` for Kaltura lecture-video transcription, `getLTILink`
+for LTI quicklink redirects) are checked in but commented out — see
+[Disabled tools](#disabled-tools).
 
 ## Architecture
 
@@ -94,6 +103,20 @@ My inbound side has self-generated token auth at the moment and the outbound sid
 **"Unfortunately, we have not yet provided students with OAuth 2.0 access to Brightspace for personal use."**  
 Because of this, it is single-user, tied to a single account, breaks on session expiry, and is likely against API terms. It is a personal tool, not a multi-user service. A future production version would also be able to register a D2L app and use the OAuth flow for the Brightspace call.
 
+## Disabled tools
+
+`server.py` also carries two `@mcp.tool()` definitions with the decorator
+commented out, so they are **not** registered:
+
+- `getLink` — launches the course's Kaltura LTI in a headless Playwright
+  browser, grabs the video's `index.m3u8`, and runs it through
+  `openai-whisper` for a transcript. Disabled because transcription is too
+  compute-heavy for the host this runs on.
+- `getLTILink` — resolves `/d2l/common/dialogs/quickLink/...` redirects (a
+  thin wrapper over a raw authenticated GET).
+
+Re-enable by un-commenting the `@mcp.tool()` line above each.
+
 ## Setup
 
 Requires Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/).
@@ -101,6 +124,11 @@ Requires Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/).
 ```bash
 uv sync
 ```
+
+`uv sync` also pulls `openai-whisper` and Playwright (via `pytest-playwright`)
+for the disabled `getLink` transcription tool — a large download (PyTorch) that
+nothing in the active tool set needs. Playwright browsers, if you enable
+`getLink`, still need `playwright install chromium`.
 
 Create `.env` with a current browser session's cookies:
 
@@ -142,7 +170,8 @@ changing dependencies, run `uv sync` by hand — the unit deliberately runs
 src/brightspacemcp/
   __init__.py   exports main()
   __main__.py   python -m brightspacemcp
-  server.py     MCPServer, all @mcp.tool() definitions, feed-merge logic
+  server.py     MCPServer, all @mcp.tool() definitions, request helpers
+                (JSON / file download), feed-merge logic, RequireToken
   auth.py       Brightspace session cookies from .env (outbound)
 deploy/
   brightspace-mcp.service

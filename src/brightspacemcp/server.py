@@ -12,6 +12,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 import os
 import uvicorn
+from playwright.async_api import async_playwright
+import whisper
 
 
 logger = logging.getLogger(__name__)
@@ -56,9 +58,31 @@ async def request(api_pull, params=None):
             logger.warning("Brightspace %s -> %s", api_pull, exc.__class__.__name__)
             return {"error": exc.__class__.__name__, "endpoint": api_pull}
 
+async def request_link(api_pull, params=None):
+    cookies = ba.return_cookies()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0'}
+    async with ht.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f'https://purdue.brightspace.com{api_pull}',
+                cookies=cookies,
+                headers=headers,
+                params=params,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            return response.content
+        except ht.HTTPStatusError as exc:
+            status = exc.response.status_code
+            logger.warning("Brightspace %s -> HTTP %s", api_pull, status)
+            # 401/403 almost always means the scraped session cookies expired.
+            hint = "session cookies likely expired - refresh .env" if status in (401, 403) else None
+            return {"error": f"HTTP {status}", "endpoint": api_pull, "hint": hint}
+        except Exception as exc:
+            logger.warning("Brightspace %s -> %s", api_pull, exc.__class__.__name__)
+            return {"error": exc.__class__.__name__, "endpoint": api_pull}
 
 _TEXTUAL_CONTENT_TYPES = ("text/", "html", "xml", "json", "javascript", "csv")
-
 
 async def request_file(api_pull, params=None):
     """
@@ -112,6 +136,57 @@ async def request_file(api_pull, params=None):
         out["Base64"] = base64.b64encode(body).decode("ascii")
     return out
 
+#@mcp.tool()
+#Removing this tool for now because video transcription is compute heavy and my home server can't handle it
+async def getLink(courseId, TopicId):
+    """
+    DO NOT USE UNLESS USER EXPLICITLY ASKS FOR VIDEO TRANSCRIPTION
+    TAKES A LONG TIME!!!
+    Use this tool for lecture videos. Currently only functions for Kaltura. 
+
+    Endpoint structure -> "le/lti/{courseId}/toolLaunch/4312384/954979030?contentTopicId={TopicId}
+    toolLaunch/[numbers] is the declaration for the tool needed. All that's needed is courseId and TopicId
+    courseId and TopicId are found in getClasses and getCourseToc
+    Will return a transcript of the video file found at the link.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        context = await browser.new_context()
+        url = f'https://purdue.brightspace.com/d2l/le/lti/{courseId}/toolLaunch/4312384/954979030?contentTopicId={TopicId}'
+        await context.add_cookies([
+            {
+                "name": "d2lSessionVal",
+                "value": str(os.getenv("d2lSessionVal")),
+                "url": url
+            },
+            {
+                "name": "d2lSecureSessionVal",
+                "value": str(os.getenv("d2lSecureSessionVal")),
+                "url": url
+            },
+        ])
+        page = await context.new_page()
+        async with page.expect_response(
+            lambda res: "index.m3u8" in res.url and res.status == 200
+        ) as response_info:
+            await page.goto(url)
+            print("Visiting URL")
+        response = await response_info.value
+        target_url = response.url
+        print(f"Successfully grabbed URL: {target_url}")
+        await browser.close()
+        await simple_transcribe(target_url)
+        return 
+
+#@mcp.tool()
+async def getLTILink(link):
+    """
+    Returns quicklink redirects
+
+    Format (or similar) : /d2l/common/dialogs/quickLink/quickLink.d2l?...
+    Does behave as a generic GET if needed.
+    """
+    return await request_link(link)
 
 @mcp.tool()
 async def getUser():
@@ -835,6 +910,11 @@ async def filter_current_courses(input):
         })
 
     return courses
+
+async def simple_transcribe(url):
+    model = whisper.load_model("medium")
+    result = model.transcribe(url)
+    return str(result["text"])
 
 class RequireToken(BaseHTTPMiddleware):
     def __init__(self, app, token: str):
