@@ -11,12 +11,20 @@ import hmac
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 import os
+import importlib.util
 import uvicorn
-from playwright.async_api import async_playwright
-import whisper
 
 
 logger = logging.getLogger(__name__)
+
+# `playwright` + `openai-whisper` ship in the optional "transcription" extra
+# (pip install brightspacemcp[transcription]). When they're absent the base
+# server still runs - getLink just isn't registered and returns an install hint
+# if reached directly.
+_HAS_TRANSCRIPTION = (
+    importlib.util.find_spec("playwright") is not None
+    and importlib.util.find_spec("whisper") is not None
+)
 
 # Inbound MCP-client auth: the RequireToken middleware (see main()) rejects any
 # request to /mcp/ without a matching `Authorization: Bearer <MCP_INBOUND_TOKEN>`
@@ -136,19 +144,27 @@ async def request_file(api_pull, params=None):
         out["Base64"] = base64.b64encode(body).decode("ascii")
     return out
 
-#@mcp.tool()
-#Removing this tool for now because video transcription is compute heavy and my home server can't handle it
+# Registered only when the optional "transcription" extra is installed
+# (see _HAS_TRANSCRIPTION and the conditional mcp.tool() call below). Also
+# compute-heavy: transcription can take a long time on a small host.
 async def getLink(courseId, TopicId):
     """
     DO NOT USE UNLESS USER EXPLICITLY ASKS FOR VIDEO TRANSCRIPTION
     TAKES A LONG TIME!!!
-    Use this tool for lecture videos. Currently only functions for Kaltura. 
+    Use this tool for lecture videos. Currently only functions for Kaltura.
 
     Endpoint structure -> "le/lti/{courseId}/toolLaunch/4312384/954979030?contentTopicId={TopicId}
     toolLaunch/[numbers] is the declaration for the tool needed. All that's needed is courseId and TopicId
     courseId and TopicId are found in getClasses and getCourseToc
     Will return a transcript of the video file found at the link.
     """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return {
+            "error": "transcription extra not installed",
+            "hint": "uv sync --extra transcription && playwright install chromium",
+        }
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         context = await browser.new_context()
@@ -176,7 +192,12 @@ async def getLink(courseId, TopicId):
         print(f"Successfully grabbed URL: {target_url}")
         await browser.close()
         await simple_transcribe(target_url)
-        return 
+        return
+
+# Conditional registration: only expose getLink when its extra is present, so a
+# base install advertises exactly the tools it can actually run.
+if _HAS_TRANSCRIPTION:
+    getLink = mcp.tool()(getLink)
 
 #@mcp.tool()
 async def getLTILink(link):
@@ -912,6 +933,7 @@ async def filter_current_courses(input):
     return courses
 
 async def simple_transcribe(url):
+    import whisper  # part of the optional "transcription" extra
     model = whisper.load_model("medium")
     result = model.transcribe(url)
     return str(result["text"])

@@ -11,7 +11,13 @@ dependencies = [
     "mcp[cli]>=2.1.1",
     "httpx2>=2.12",
     "python-dotenv>=1.2",
-    "pytest-playwright>=0.9.0",
+]
+
+[project.optional-dependencies]
+# Backs the getLink lecture-video transcription tool. Heavy (pulls PyTorch);
+# opt in with `uv sync --extra transcription` and `playwright install chromium`.
+transcription = [
+    "playwright>=1.49",
     "openai-whisper>=20250625",
 ]
 

@@ -61,9 +61,9 @@ On any upstream failure a tool returns `{"error": ..., "endpoint": ...}` in
 place of its normal payload (rather than a bare `null`); a 401/403 — usually
 expired session cookies — adds a `"hint"` that says so.
 
-Two more tools (`getLink` for Kaltura lecture-video transcription, `getLTILink`
-for LTI quicklink redirects) are checked in but commented out — see
-[Disabled tools](#disabled-tools).
+`getLink` (Kaltura lecture-video transcription) is registered only when the
+optional `transcription` extra is installed; `getLTILink` (LTI quicklink
+redirects) is checked in but commented out. See [Optional tools](#optional-tools).
 
 ## Architecture
 
@@ -103,19 +103,32 @@ My inbound side has self-generated token auth at the moment and the outbound sid
 **"Unfortunately, we have not yet provided students with OAuth 2.0 access to Brightspace for personal use."**  
 Because of this, it is single-user, tied to a single account, breaks on session expiry, and is likely against API terms. It is a personal tool, not a multi-user service. A future production version would also be able to register a D2L app and use the OAuth flow for the Brightspace call.
 
-## Disabled tools
+## Optional tools
 
-`server.py` also carries two `@mcp.tool()` definitions with the decorator
-commented out, so they are **not** registered:
+**`getLink`** — launches the course's Kaltura LTI in a headless Playwright
+browser, grabs the video's `index.m3u8`, and runs it through `openai-whisper`
+for a transcript. Its dependencies live in the `transcription` extra
+(`playwright` + `openai-whisper`, which pulls PyTorch), kept out of the base
+install because they're large and the transcription itself is slow on a small
+host.
 
-- `getLink` — launches the course's Kaltura LTI in a headless Playwright
-  browser, grabs the video's `index.m3u8`, and runs it through
-  `openai-whisper` for a transcript. Disabled because transcription is too
-  compute-heavy for the host this runs on.
-- `getLTILink` — resolves `/d2l/common/dialogs/quickLink/...` redirects (a
-  thin wrapper over a raw authenticated GET).
+- The base server imports fine without them; `server.py` checks
+  `importlib.util.find_spec` at startup (`_HAS_TRANSCRIPTION`) and only calls
+  `mcp.tool()(getLink)` when both are present, so a lean install advertises
+  exactly the tools it can run.
+- Called without the extra (e.g. registered by hand), `getLink` returns
+  `{"error": "transcription extra not installed", "hint": ...}`.
 
-Re-enable by un-commenting the `@mcp.tool()` line above each.
+Enable it with:
+
+```bash
+uv sync --extra transcription
+playwright install chromium
+```
+
+**`getLTILink`** — resolves `/d2l/common/dialogs/quickLink/...` redirects (a thin
+wrapper over a raw authenticated GET). Checked in with its `@mcp.tool()` line
+commented out; un-comment to register it (no extra dependencies).
 
 ## Setup
 
@@ -125,10 +138,8 @@ Requires Python ≥ 3.14 and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-`uv sync` also pulls `openai-whisper` and Playwright (via `pytest-playwright`)
-for the disabled `getLink` transcription tool — a large download (PyTorch) that
-nothing in the active tool set needs. Playwright browsers, if you enable
-`getLink`, still need `playwright install chromium`.
+The base `uv sync` is lean — `mcp`, `httpx2`, `python-dotenv`. See
+[Optional tools](#optional-tools) for the `transcription` extra.
 
 Create `.env` with a current browser session's cookies:
 
