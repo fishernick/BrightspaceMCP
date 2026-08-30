@@ -51,6 +51,13 @@ fan out across courses concurrently.
   not a link/URL topic). Returns `ContentType` / `FileName` / `Size`, then
   `Text` for HTML/text/XML/JSON/CSV payloads or `Base64` for binary ones (PDFs,
   slide decks, images). Redirects to D2L's signed storage URLs are followed.
+- `getSyllabus` — the course syllabus / content overview
+  (`GET /le/1.82/{orgid}/overview`). Returns `Description` (rich text) and
+  `HasAttachment`; when an attachment exists it is downloaded too and returned
+  under `Attachment` in the same `ContentType` / `FileName` / `Size` / `Text` or
+  `Base64` shape as `getTopicFile`. Pass `include_attachment=false` for just the
+  metadata. Not every course uses the overview — if it comes back empty, look
+  for a "Syllabus" File topic via `getCourseToc` + `getTopicFile`.
 
 Completed content items and inactive quizzes are filtered out by default;
 `include_completed` / `include_inactive` bring them back. Calendar events carry

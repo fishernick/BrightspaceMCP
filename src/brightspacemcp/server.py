@@ -396,6 +396,43 @@ async def getTopicFile(orgid, topicId):
     return await request_file(f'/le/1.82/{orgid}/content/topics/{topicId}/file')
 
 @mcp.tool()
+async def getSyllabus(orgid, include_attachment: bool | str = True):
+    """
+    Retrieves a course's syllabus, i.e. the instructor-authored course
+    overview shown at the top of the Content tool - the spot where a
+    syllabus is most commonly posted.
+
+    Fetches GET /le/1.82/{orgid}/overview, which returns:
+        {"Description": <rich text>, "HasAttachment": <bool>}
+
+    Input uses the OrgUnit ID found in the getClasses method.
+
+    When HasAttachment is true and include_attachment is left on (the
+    default), the attached file is also downloaded from
+    GET /le/1.82/{orgid}/overview/attachment and returned under an
+    "Attachment" key as a dict: ContentType, FileName, Size, then either
+    Text (HTML/text/XML/JSON/CSV) or Base64 (PDF, Word, etc.) - the same
+    shape getTopicFile returns. Pass include_attachment=False to skip that
+    second request and get just the overview metadata.
+
+    NOTE: not every course posts the syllabus here. Some link it as a File
+    topic inside a module instead. If Description is empty and HasAttachment
+    is false, search getCourseToc for a "Syllabus" topic and pull it with
+    getTopicFile.
+
+    On failure returns {"error": ...} like the other tools; a 404 means the
+    course has no content overview configured.
+    """
+    include_attachment = _coerce_bool(include_attachment, default=True)
+    overview = await request(f'/le/1.82/{orgid}/overview')
+    if not isinstance(overview, dict) or "error" in overview:
+        return overview
+    result = dict(overview)
+    if include_attachment and overview.get("HasAttachment"):
+        result["Attachment"] = await request_file(f'/le/1.82/{orgid}/overview/attachment')
+    return result
+
+@mcp.tool()
 async def getWeeklyCalendarEvents(orgid, days: int | str = 7):
     """
     Retrieves the calling user's calendar events for a specific course within
