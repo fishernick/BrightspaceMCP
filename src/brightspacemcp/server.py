@@ -395,7 +395,7 @@ async def getTopicFile(orgid, topicId):
     """
     return await request_file(f'/le/1.82/{orgid}/content/topics/{topicId}/file')
 
-@mcp.tool()
+#@mcp.tool()
 async def getSyllabus(orgid, include_attachment: bool | str = True):
     """
     Retrieves a course's syllabus, i.e. the instructor-authored course
